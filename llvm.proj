@@ -96,8 +96,17 @@
     <_LLVMBuildArgs Include='-DLLVM_ENABLE_LIBXML2=OFF' />
     <_LLVMBuildArgs Include='-DLLVM_ENABLE_TERMINFO=OFF' />
     <_LLVMBuildArgs Include='-DLLVM_ENABLE_ZSTD=OFF' />
-    <_LLVMBuildArgs Include='-DLLVM_EXTERNALIZE_DEBUGINFO=ON' />
-    <_LLVMBuildArgs Include='-DLLVM_EXTERNALIZE_DEBUGINFO_INSTALL=ON' />
+    <!-- LLVM_EXTERNALIZE_DEBUGINFO drives a post-build add_custom_command
+         that runs $(CMAKE_OBJCOPY) only-keep-debug / $(CMAKE_STRIP) -g -x. On
+         Windows MSVC both variables are empty, so the command line collapses
+         to just an option string and cmd.exe fails with "is not recognized
+         as an internal or external command". Windows already ships separate
+         PDB files (LLVM_ENABLE_PDB), so we don't need the objcopy/strip
+         dance there. The same upstream LLVM behavior existed in 19.x; the
+         new llvm-PerfectShuffle utility added in 23.x is the first target
+         that actually exercises this path on Windows. -->
+    <_LLVMBuildArgs Condition="'$(BuildOS)' != 'Windows_NT'" Include='-DLLVM_EXTERNALIZE_DEBUGINFO=ON' />
+    <_LLVMBuildArgs Condition="'$(BuildOS)' != 'Windows_NT'" Include='-DLLVM_EXTERNALIZE_DEBUGINFO_INSTALL=ON' />
     <_LLVMBuildArgs Include='-DCOMPILER_RT_USE_LLVM_UNWINDER=OFF' />
     <_LLVMBuildArgs Condition="'$(BuildOS)' == 'Windows_NT'" Include='-DLLVM_ENABLE_PDB=ON' />
     <_LLVMBuildArgs Condition="'$(BuildOS)' == 'Windows_NT'" Include='-DLEGAL_COPYRIGHT="\xa9 Microsoft Corporation. All rights reserved."' />
@@ -263,6 +272,18 @@
       <FilesToDelete Remove="$(_LLVMInstallDir)/bin/clang-tidy*" />
     </ItemGroup>
     <Delete Files="@(FilesToDelete)" ContinueOnError="true" TreatErrorsAsWarnings="true" />
+
+    <!-- CMake install for utility binaries (like llvm-tblgen) does not copy
+         their .pdb to the install tree on Windows. Two transport packages
+         (Mono.LLVM.Sdk, Mono.LLVM.Wasm.B.Transport) reference llvm-tblgen.pdb
+         from $(_LLVMInstallDir)\bin, so copy it from the build tree. -->
+    <ItemGroup Condition="'$(BuildOS)' == 'Windows_NT'">
+      <_PdbsToCopy Include="$(_LLVMBuildDir)\bin\llvm-tblgen.pdb" Condition="Exists('$(_LLVMBuildDir)\bin\llvm-tblgen.pdb')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PdbsToCopy)"
+          DestinationFolder="$(_LLVMInstallDir)\bin"
+          SkipUnchangedFiles="true"
+          Condition="'@(_PdbsToCopy)' != ''" />
   </Target>
 
   <Target Name="Build" DependsOnTargets="_LLVMBeforeBuild;_LLVMBuild;_LLVMAfterBuild" />
